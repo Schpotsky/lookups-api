@@ -15,8 +15,10 @@ const HttpStatus = require('http-status-codes')
 const index = helper.index
 const type = helper.type
 let esClient
+let databaseService
 (async function () {
   esClient = await helper.getESClient()
+  databaseService = await helper.getDatabaseServiceInstance()
 })()
 
 /**
@@ -176,7 +178,7 @@ async function list (criteria, authUser) {
     options.isDeleted = { ne: true }
   }
   // ignore pagination, scan all matched records
-  result = await helper.scan(config.AMAZON.DYNAMODB_DEVICE_TABLE, options)
+  result = await databaseService.search(config.AMAZON.DYNAMODB_DEVICE_TABLE, options)
 
   if (!criteria.includeSoftDeleted) {
     result = helper.sanitizeResult(result, true)
@@ -225,7 +227,7 @@ getEntity.schema = {
  * @returns {Object} the created device
  */
 async function create (data) {
-  await helper.validateDuplicate(config.AMAZON.DYNAMODB_DEVICE_TABLE,
+  await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_DEVICE_TABLE,
     ['type', 'manufacturer', 'model', 'operatingSystem', 'operatingSystemVersion'],
     [data.type, data.manufacturer, data.model, data.operatingSystem, data.operatingSystemVersion])
 
@@ -248,7 +250,7 @@ async function create (data) {
   }
   try {
     // create record in db
-    res = await helper.create(config.AMAZON.DYNAMODB_DEVICE_TABLE, data)
+    res = await databaseService.create(config.AMAZON.DYNAMODB_DEVICE_TABLE, data)
   } catch (e) {
     try {
       await esClient.delete({
@@ -290,7 +292,7 @@ create.schema = {
  */
 async function partiallyUpdate (id, data) {
   // get data in DB
-  const device = await helper.getById(config.AMAZON.DYNAMODB_DEVICE_TABLE, id)
+  const device = await databaseService.getById(config.AMAZON.DYNAMODB_DEVICE_TABLE, id)
   data.id = id
   if ((data.type && device.type !== data.type) ||
      (data.manufacturer && device.manufacturer !== data.manufacturer) ||
@@ -299,7 +301,7 @@ async function partiallyUpdate (id, data) {
      (data.operatingSystemVersion && device.operatingSystemVersion !== data.operatingSystemVersion)) {
     // ensure same device not exists
 
-    await helper.validateDuplicate(config.AMAZON.DYNAMODB_DEVICE_TABLE,
+    await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_DEVICE_TABLE,
       ['type', 'manufacturer', 'model', 'operatingSystem', 'operatingSystemVersion'],
       [data.type || device.type,
         data.manufacturer || device.manufacturer,
@@ -341,7 +343,7 @@ async function partiallyUpdate (id, data) {
     }
     try {
       // then update data in DB
-      res = await helper.update(device, data)
+      res = await databaseService.update(device, data)
     } catch (e) {
       // ES Rollback
       try {
@@ -410,7 +412,7 @@ update.schema = {
  */
 async function remove (id, query) {
   // remove data in DB
-  const device = await helper.getById(config.AMAZON.DYNAMODB_DEVICE_TABLE, id)
+  const device = await databaseService.getById(config.AMAZON.DYNAMODB_DEVICE_TABLE, id)
   let originalObj = _.cloneDeep(device)
   try {
     if (query.destroy) {

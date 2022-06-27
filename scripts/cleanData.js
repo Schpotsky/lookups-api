@@ -9,8 +9,10 @@ const scriptHelper = require('./helpers')
 const helper = require('../src/common/helper')
 
 var esClient
+let databaseService
 (async function () {
   esClient = await helper.getESClient()
+  databaseService = await helper.getDatabaseServiceInstance()
 })()
 
 /**
@@ -22,7 +24,7 @@ const cleanData = async (lookupName) => {
   const records = await helper.scan(getTableName)
   for (const record of records) {
     try {
-      await record.delete()
+      await databaseService.delete(record)
       await esClient.delete({ index: esIndex, type: esType, id: record.id })
     } catch (e) {
       logger.logFullError(e)

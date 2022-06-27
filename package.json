@@ -47,6 +47,7 @@
     "lodash": "^4.17.15",
     "tc-bus-api-wrapper": "github:topcoder-platform/tc-bus-api-wrapper",
     "tc-core-library-js": "github:appirio-tech/tc-core-library-js#v2.6.4",
+    "tc-dal": "file:../tc-dal",
     "uuid": "^3.3.2",
     "winston": "^3.1.0"
   },

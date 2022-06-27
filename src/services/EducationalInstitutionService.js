@@ -16,8 +16,10 @@ const index = helper.index
 const type = helper.type
 
 let esClient
+let databaseService
 (async function () {
   esClient = await helper.getESClient()
+  databaseService = await helper.getDatabaseServiceInstance()
 })()
 
 /**
@@ -129,7 +131,7 @@ async function list (criteria, authUser) {
     options.isDeleted = { ne: true }
   }
   // ignore pagination, scan all matched records
-  result = await helper.scan(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, options)
+  result = await databaseService.search(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, options)
 
   if (!criteria.includeSoftDeleted) {
     result = helper.sanitizeResult(result, true)
@@ -174,7 +176,7 @@ getEntity.schema = {
  * @returns {Object} the created educational institution
  */
 async function create (data) {
-  await helper.validateDuplicate(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, 'name', data.name)
+  await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, 'name', data.name)
   data.id = uuid()
   data.isDeleted = false
   let res
@@ -194,7 +196,7 @@ async function create (data) {
 
   try {
     // create record in db
-    res = await helper.create(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, data)
+    res = await databaseService.create(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, data)
   } catch (e) {
     try {
       await esClient.delete({
@@ -232,11 +234,11 @@ create.schema = {
  */
 async function partiallyUpdate (id, data) {
   // get data in DB
-  const ei = await helper.getById(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, id)
+  const ei = await databaseService.getById(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, id)
   data.id = id
   if (data.name && ei.name !== data.name) {
     // ensure name is not used already
-    await helper.validateDuplicate(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, 'name', data.name)
+    await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, 'name', data.name)
 
     let res
     let originalRecord = _.cloneDeep(ei)
@@ -272,7 +274,7 @@ async function partiallyUpdate (id, data) {
     }
     try {
       // then update data in DB
-      res = await helper.update(ei, data)
+      res = await databaseService.update(ei, data)
     } catch (e) {
       // ES Rollback
       try {
@@ -333,7 +335,7 @@ update.schema = {
  */
 async function remove (id, query) {
   // remove data in DB
-  const ei = await helper.getById(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, id)
+  const ei = await databaseService.getById(config.AMAZON.DYNAMODB_EDUCATIONAL_INSTITUTION_TABLE, id)
   let originalObj = _.cloneDeep(ei)
   try {
     if (query.destroy) {

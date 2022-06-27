@@ -1,5 +1,9 @@
 # Topcoder Lookup API v5
 
+**The code updated of lookups-api are for demo of tc-dal purpose only and not to be merged yet to the repository**
+
+In `lookups-api` source code, old dynamoose models are still used for creating and dropping the tables from the database
+
 ## Prerequisites
 
 - NodeJS (v10)

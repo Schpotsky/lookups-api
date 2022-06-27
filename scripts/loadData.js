@@ -11,8 +11,10 @@ const scriptHelper = require('./helpers')
 const helper = require('../src/common/helper')
 
 var esClient
+let databaseService
 (async function () {
   esClient = await helper.getESClient()
+  databaseService = await helper.getDatabaseServiceInstance()
 })()
 
 /**
@@ -41,7 +43,7 @@ const loadData = async (lookupName, lookupFilePath) => {
         }
       }
       entity.isDeleted = false
-      const res = await helper.create(getTableName, entity)
+      const res = await databaseService.create(getTableName, entity)
 
       // create record in es
       await esClient.create({

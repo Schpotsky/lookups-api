@@ -19,8 +19,11 @@ const Resources = {
   EducationalInstitution: 'educationalInstitution'
 }
 
+const DATABASE_TYPE = 'DynamoDb'
+
 module.exports = {
   UserRoles,
   Scopes,
-  Resources
+  Resources,
+  DATABASE_TYPE
 }

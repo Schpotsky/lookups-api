@@ -15,8 +15,10 @@ const index = helper.index
 const type = helper.type
 
 let esClient
+let databaseService
 (async function () {
   esClient = await helper.getESClient()
+  databaseService = await helper.getDatabaseServiceInstance()
 })()
 
 /**
@@ -138,8 +140,9 @@ async function list (criteria, authUser) {
   if (!criteria.includeSoftDeleted) {
     options.isDeleted = { ne: true }
   }
-  // ignore pagination, scan all matched records
-  result = await helper.scan(config.AMAZON.DYNAMODB_COUNTRY_TABLE, options)
+
+  // Get all matched records from the database
+  result = await databaseService.search(config.AMAZON.DYNAMODB_COUNTRY_TABLE, options)
 
   if (!criteria.includeSoftDeleted) {
     result = helper.sanitizeResult(result, true)
@@ -186,7 +189,7 @@ getEntity.schema = {
  * @returns {Object} the created country
  */
 async function create (data) {
-  await helper.validateDuplicate(config.AMAZON.DYNAMODB_COUNTRY_TABLE, 'name', data.name)
+  await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_COUNTRY_TABLE, 'name', data.name)
   data.id = uuid()
   data.isDeleted = false
   let res
@@ -210,7 +213,7 @@ async function create (data) {
     // delete  data.name
 
     // create record in db
-    res = await helper.create(config.AMAZON.DYNAMODB_COUNTRY_TABLE, data)
+    res = await databaseService.create(config.AMAZON.DYNAMODB_COUNTRY_TABLE, data)
   } catch (e) {
     // ES Rollback
     try {
@@ -252,14 +255,15 @@ create.schema = {
 async function partiallyUpdate (id, data) {
   // get data in DB
   try {
-    const country = await helper.getById(config.AMAZON.DYNAMODB_COUNTRY_TABLE, id)
+    // Use the databaseService to get the country by id
+    const country = await databaseService.getById(config.AMAZON.DYNAMODB_COUNTRY_TABLE, id)
     data.id = id
     if ((data.name && country.name !== data.name) ||
       (data.countryFlag && country.countryFlag !== data.countryFlag) ||
       (data.countryCode && country.countryCode !== data.countryCode)) {
       if (data.name && country.name !== data.name) {
         // ensure name is not used already
-        await helper.validateDuplicate(config.AMAZON.DYNAMODB_COUNTRY_TABLE, 'name', data.name)
+        await databaseService.validateDuplicate(config.AMAZON.DYNAMODB_COUNTRY_TABLE, 'name', data.name)
       }
       let res
       let originalEsRecord = _.cloneDeep(country)
@@ -301,7 +305,7 @@ async function partiallyUpdate (id, data) {
 
         // to simulate error uncomment below line
         // data.isDeleted = 123
-        res = await helper.update(country, data)
+        res = await databaseService.update(country, data)
       } catch (e) {
         // ES Rollback
         try {
@@ -371,7 +375,7 @@ update.schema = {
 async function remove (id, query) {
   try {
   // remove data in DB
-    const country = await helper.getById(config.AMAZON.DYNAMODB_COUNTRY_TABLE, id)
+    const country = await databaseService.getById(config.AMAZON.DYNAMODB_COUNTRY_TABLE, id)
     let originalObj = _.cloneDeep(country)
 
     try {

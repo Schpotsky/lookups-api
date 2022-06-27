@@ -6,9 +6,11 @@ const querystring = require('querystring')
 const config = require('config')
 const AWS = require('aws-sdk')
 const elasticsearch = require('elasticsearch')
-const models = require('../models')
+const entities = require('../entities')
 const errors = require('./errors')
 const logger = require('./logger')
+const { getDatabaseService } = require('tc-dal')
+const { DATABASE_TYPE } = require('../../app-constants')
 const busApi = require('tc-bus-api-wrapper')
 const busApiClient = busApi(_.pick(config, ['AUTH0_URL', 'AUTH0_AUDIENCE', 'TOKEN_CACHE_TIME', 'AUTH0_CLIENT_ID',
   'AUTH0_CLIENT_SECRET', 'BUSAPI_URL', 'KAFKA_ERROR_TOPIC']))
@@ -28,6 +30,9 @@ let dbInstance
 
 // Elasticsearch client
 let esClient
+
+// The service to use to interact with the database
+let databaseService
 
 AWS.config.update({
   // accessKeyId: config.AMAZON.AWS_ACCESS_KEY_ID,
@@ -134,149 +139,19 @@ async function deleteTable (tableName) {
   })
 }
 
-function getNotFoundError (modelName, id) {
-  return new errors.NotFoundError(`${modelName} with id: ${id} doesn't exist`)
-}
-
 /**
- * Get Data by model id
- * @param {String} modelName The dynamoose model name
- * @param {String} id The id value
- * @returns found record
+ * Removes an item from the database, it supports hard and soft delete.
+ * If destroy == true, then the item is hard-deleted otherwise it is soft-deleted
+ *
+ * @param {Object} dbItem The database object to remove
+ * @param {Boolean} destroy The flag indicating whether to hard delete (destroy == true) or soft delete the item
+ * @returns
  */
-async function getById (modelName, id) {
-  return new Promise((resolve, reject) => {
-    models[modelName].query('id').eq(id).exec((err, result) => {
-      if (err) {
-        reject(err)
-      } else if (result.length > 0) {
-        resolve(result[0])
-      } else {
-        reject(getNotFoundError(modelName, id))
-      }
-    })
-  })
-}
-
-/**
- * Create item in database
- * @param {Object} modelName The dynamoose model name
- * @param {Object} data The create data object
- * @returns created entity
- */
-async function create (modelName, data) {
-  return new Promise((resolve, reject) => {
-    const dbItem = new models[modelName](data)
-    dbItem.save((err) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(dbItem)
-      }
-    })
-  })
-}
-
-/**
- * Update item in database
- * @param {Object} dbItem The Dynamo database item
- * @param {Object} data The updated data object
- * @returns updated entity
- */
-async function update (dbItem, data) {
-  Object.keys(data).forEach((key) => {
-    dbItem[key] = data[key]
-  })
-  return new Promise((resolve, reject) => {
-    dbItem.save((err) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(dbItem)
-      }
-    })
-  })
-}
-
 async function remove (dbItem, destroy) {
   if (destroy) {
-    return deleteItem(dbItem)
+    return databaseService.delete(dbItem)
   } else {
-    return update(dbItem, { isDeleted: true })
-  }
-}
-
-/**
- * Delete item in database
- * @param {Object} dbItem The Dynamo database item to remove
- */
-async function deleteItem (dbItem) {
-  return new Promise((resolve, reject) => {
-    dbItem.delete((err) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(dbItem)
-      }
-    })
-  })
-}
-
-/**
- * Get data collection by scan parameters
- * @param {Object} modelName The dynamoose model name
- * @param {Object} scanParams The scan parameters object
- * @returns found records
- */
-async function scan (modelName, scanParams) {
-  return new Promise((resolve, reject) => {
-    models[modelName].scan(scanParams).exec((err, result) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(result.count === 0 ? [] : result)
-      }
-    })
-  })
-}
-
-/**
- * Validate the data to ensure no duplication
- * @param {Object} modelName The dynamoose model name
- * @param {String} keys The attribute name of dynamoose model
- * @param {String} values The attribute value to be validated
- */
-async function validateDuplicate (modelName, keys, values) {
-  const options = {}
-  if (Array.isArray(keys)) {
-    if (keys.length !== values.length) {
-      throw new errors.BadRequestError(`size of ${keys} and ${values} do not match.`)
-    }
-
-    keys.forEach(function (key, index) {
-      options[key] = { eq: values[index] }
-    })
-  } else {
-    options[keys] = { eq: values }
-  }
-
-  const records = await scan(modelName, options)
-  if (records.length > 0) {
-    if (Array.isArray(keys)) {
-      let str = `${modelName} with [ `
-
-      for (const i in keys) {
-        const key = keys[i]
-        const value = values[i]
-
-        str += `${key}: ${value}`
-        if (i < keys.length - 1) { str += ', ' }
-      }
-
-      throw new errors.ConflictError(`${str} ] already exists`)
-    } else {
-      throw new errors.ConflictError(`${modelName} with ${keys}: ${values} already exists`)
-    }
+    return databaseService.update(dbItem, { isDeleted: true })
   }
 }
 
@@ -341,7 +216,7 @@ async function getEntity (modelName, id, query, authUser) {
     return result
   }
 
-  result = await getById(modelName, id)
+  result = await databaseService.getById(modelName, id)
 
   if (
     !isAdminUser ||
@@ -529,18 +404,44 @@ async function publishError (topic, payload, action) {
   await busApiClient.postEvent(message)
 }
 
+/**
+ * Get The database service to use to interact with the DB
+ * @return {Object} The databaseService instance
+ */
+function getDatabaseServiceInstance () {
+  if (databaseService) {
+    return databaseService
+  }
+  // See supported aws config at: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/Config.html#constructor-property
+
+  const databaseServiceConfig = {
+    awsConfig: {
+      accessKeyId: config.AMAZON.AWS_ACCESS_KEY_ID,
+      secretAccessKey: config.AMAZON.AWS_SECRET_ACCESS_KEY,
+      region: config.AMAZON.AWS_REGION
+      // maxRetries: 10
+    },
+    isLocalDB: config.AMAZON.IS_LOCAL_DB,
+    localDatabaseURL: config.AMAZON.DYNAMODB_URL,
+    dynamooseDefaults: { // The values in this configuration parameter need to be extracted to app configuration
+      create: false,
+      update: false,
+      waitForActive: false
+    },
+    entities
+  }
+
+  databaseService = getDatabaseService(DATABASE_TYPE, databaseServiceConfig)
+  return databaseService
+}
+
 module.exports = {
   wrapExpress,
   autoWrapExpress,
   createTable,
   deleteTable,
-  getById,
   getEntity,
-  create,
-  update,
   remove,
-  scan,
-  validateDuplicate,
   getESClient,
   createESIndex,
   setResHeaders,
@@ -549,5 +450,6 @@ module.exports = {
   sanitizeResult,
   index,
   type,
-  publishError
+  publishError,
+  getDatabaseServiceInstance
 }
